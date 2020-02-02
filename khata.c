@@ -40,7 +40,8 @@ enum editorKey {
 
 enum editorHighlight {
   HL_NORMAL = 0,
-  HL_NUMBER
+  HL_NUMBER,
+  HL_MATCH
 };
 
 /*** data ***/
@@ -206,6 +207,7 @@ void editorUpdateSyntax(erow *row) {
 int editorSyntaxToColor(int hl) {
   switch (hl) {
     case HL_NUMBER: return 31;
+    case HL_MATCH: return 34;
     default: return 37;
   }
 }
@@ -227,12 +229,11 @@ int editorRowRxToCx(erow *row, int rx) {
   int cur_rx = 0;
   int cx;
   for (cx = 0; cx < row->size; cx++) {
-    if (row ->chars[cx] == '\t')
+    if (row->chars[cx] == '\t')
       cur_rx += (KHATA_TAB_STOP - 1) - (cur_rx % KHATA_TAB_STOP);
     cur_rx++;
 
-    if (cur_rx > rx)
-      return cx;
+    if (cur_rx > rx) return cx;
   }
   return cx;
 }
@@ -258,15 +259,14 @@ void editorUpdateRow(erow *row) {
   row->render[idx] = '\0';
   row->rsize = idx;
 
-  editorUpdateRow(row);
+  editorUpdateSyntax(row);
 }
 
 void editorInsertRow(int at, char *s, size_t len) {
-  if (at < 0 || at > E.numrows)
-    return;
+  if (at < 0 || at > E.numrows) return;
+
   E.row = realloc(E.row, sizeof(erow) * (E.numrows + 1));
   memmove(&E.row[at + 1], &E.row[at], sizeof(erow) * (E.numrows - at));
-
 
   E.row[at].size = len;
   E.row[at].chars = malloc(len + 1);
@@ -441,6 +441,7 @@ void editorSave() {
 void editorFindCallback(char *query, int key) {
   static int last_match = -1;
   static int direction = 1;
+
   if (key == '\r' || key == '\x1b') {
     last_match = -1;
     direction = 1;
@@ -454,24 +455,23 @@ void editorFindCallback(char *query, int key) {
     direction = 1;
   }
 
-  if (last_match == -1)
-    direction = 1;
+  if (last_match == -1) direction = 1;
   int current = last_match;
   int i;
   for (i = 0; i < E.numrows; i++) {
     current += direction;
-    if (current == -1)
-      current = E.numrows - 1;
-    else if (current == E.numrows)
-      current = 0;
+    if (current == -1) current = E.numrows - 1;
+    else if (current == E.numrows) current = 0;
+
     erow *row = &E.row[current];
     char *match = strstr(row->render, query);
     if (match) {
       last_match = current;
       E.cy = current;
       E.cx = editorRowRxToCx(row, match - row->render);
-      E.cx = match - row->render;
       E.rowoff = E.numrows;
+
+      memset(&row->hl[match - row->render], HL_MATCH, strlen(query));
       break;
     }
   }
@@ -484,7 +484,7 @@ void editorFind() {
   int saved_rowoff = E.rowoff;
 
   char *query = editorPrompt("Search: %s (Use ESC/Arrows/Enter)",
-                              editorFindCallback);
+                             editorFindCallback);
 
   if (query) {
     free(query);
@@ -668,20 +668,19 @@ char *editorPrompt(char *prompt, void (*callback)(char *, int)) {
   while (1) {
     editorSetStatusMessage(prompt, buf);
     editorRefreshScreen();
+
     int c = editorReadKey();
-        if (c == DEL_KEY || c == CTRL_KEY('h') || c == BACKSPACE) {
+    if (c == DEL_KEY || c == CTRL_KEY('h') || c == BACKSPACE) {
       if (buflen != 0) buf[--buflen] = '\0';
     } else if (c == '\x1b') {
       editorSetStatusMessage("");
-      if (callback)
-        callback(buf, c);
+      if (callback) callback(buf, c);
       free(buf);
       return NULL;
     } else if (c == '\r') {
       if (buflen != 0) {
         editorSetStatusMessage("");
-        if (callback)
-          callback(buf, c);
+        if (callback) callback(buf, c);
         return buf;
       }
     } else if (!iscntrl(c) && c < 128) {
@@ -692,8 +691,8 @@ char *editorPrompt(char *prompt, void (*callback)(char *, int)) {
       buf[buflen++] = c;
       buf[buflen] = '\0';
     }
-    if (callback)
-      callback(buf, c);
+
+    if (callback) callback(buf, c);
   }
 }
 
@@ -772,8 +771,8 @@ void editorProcessKeypress() {
       break;
 
     case CTRL_KEY('f'):
-    editorFind();
-    break;
+      editorFind();
+      break;
 
     case BACKSPACE:
     case CTRL_KEY('h'):
